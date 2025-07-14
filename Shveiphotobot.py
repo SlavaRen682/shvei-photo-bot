@@ -133,12 +133,6 @@ def choose_category(call):
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
 
-if __name__ == '__main__':
-    # Установка вебхука 1 раз при старте
-    bot.remove_webhook()
-    result = bot.set_webhook(url=WEBHOOK_URL)
-    if result:
-        print("Webhook установлен успешно")
-    else:
-        print("Ошибка установки webhook")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), threaded=True)
+# Эта часть не должна запускаться в Gunicorn
+# Webhook настраивай один раз отдельно вручную через скрипт set_webhook.py
+# или просто временно запусти python Shveiphotobot.py один раз
