@@ -5,9 +5,9 @@ from io import BytesIO
 import os
 import uuid
 
-TOKEN = os.environ.get("TOKEN")  # Установи переменную TOKEN в Render
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Установи WEBHOOK_URL в Render
-OWNER_ID = int(os.environ.get("OWNER_ID"))
+TOKEN = os.environ.get("TOKEN")  # Установи в Render
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Установи в Render
+OWNER_ID = int(os.environ.get("OWNER_ID"))  # Установи в Render
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -34,9 +34,12 @@ CATEGORY_GROUPS = {
     "👗 Платья и сарафаны": "-1002897926896"
 }
 
+# Генерируем короткие ID для callback_data
+CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
+REVERSE_CATEGORY_IDS = {v: k for k, v in CATEGORY_SHORT_IDS.items()}
+
 PHOTO_QUEUE = {}
 
-# === Webhook route ===
 @app.route("/", methods=["GET"])
 def index():
     return "ShveiBot is alive!", 200
@@ -68,15 +71,15 @@ def receive_photo():
         PHOTO_QUEUE[user_id] = []
     PHOTO_QUEUE[user_id].append(photo_data)
 
+    # Кнопки выбора категории (короткие ID)
     markup = types.InlineKeyboardMarkup()
-    for cat in CATEGORY_GROUPS:
-        markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{photo_id}:{cat}"))
+    for cat_id, cat_name in CATEGORY_SHORT_IDS.items():
+        markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat:{user_id}:{photo_id}:{cat_id}"))
 
-    group_file.seek(0)  # 🛠️ ВАЖНО: сбросить позицию в начало
+    group_file.seek(0)
     bot.send_photo(OWNER_ID, group_file, caption=caption, reply_markup=markup)
 
     return "ok", 200
-
 
 @bot.message_handler(commands=['start'])
 def bot_start(message):
@@ -89,14 +92,14 @@ def handle_photo_from_user(message):
     PHOTO_QUEUE[user_id] = {'file_id': file_id}
 
     markup = types.InlineKeyboardMarkup()
-    for cat in CATEGORY_GROUPS:
-        markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat_user:{user_id}:{cat}"))
+    for cat_name, group_id in CATEGORY_GROUPS.items():
+        markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat_user:{user_id}:{group_id}"))
 
     bot.send_photo(user_id, file_id, caption="🧵 Выберите категорию пошива:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_user:"))
 def handle_user_category(call):
-    _, user_id_str, cat = call.data.split(":", 2)
+    _, user_id_str, group_id = call.data.split(":")
     user_id = int(user_id_str)
     data = PHOTO_QUEUE.get(user_id)
     if not data:
@@ -104,52 +107,48 @@ def handle_user_category(call):
         return
 
     file_id = data['file_id']
-    group_id = CATEGORY_GROUPS.get(cat)
-
     try:
-        bot.send_photo(group_id, file_id, 
-                       caption=
-                                "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-                                "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-                                "💬 Напишите цену пошива прямо здесь."
-                       )
+        bot.send_photo(group_id, file_id, caption=
+            "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+            "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+            "💬 Напишите цену пошива прямо здесь."
+        )
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
+        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat:"))
 def choose_category(call):
-    _, user_id_str, photo_id, cat = call.data.split(":", 3)
-    user_id = int(user_id_str)
-    photos = PHOTO_QUEUE.get(user_id)
-    if not photos:
-        bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
-        return
-
-    # Найти фото по photo_id
-    photo_entry = None
-    for p in photos:
-        if p['id'] == photo_id:
-            photo_entry = p
-            break
-
-    if not photo_entry:
-        bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
-        return
-
-    group_id = CATEGORY_GROUPS.get(cat)
-
     try:
+        _, user_id_str, photo_id, cat_id = call.data.split(":")
+        user_id = int(user_id_str)
+        cat_name = CATEGORY_SHORT_IDS.get(cat_id)
+        if not cat_name:
+            bot.send_message(call.message.chat.id, "❌ Категория не найдена.")
+            return
+        photos = PHOTO_QUEUE.get(user_id)
+        if not photos:
+            bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
+            return
+
+        photo_entry = next((p for p in photos if p['id'] == photo_id), None)
+        if not photo_entry:
+            bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
+            return
+
+        group_id = CATEGORY_GROUPS.get(cat_name)
+        photo_entry['file'].seek(0)
+
         bot.send_photo(group_id, photo_entry['file'], caption=photo_entry['caption'])
         bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
-        photos.remove(photo_entry)  # удаляем из очереди
-        if len(photos) == 0:
-            del PHOTO_QUEUE[user_id]  # если фоток не осталось — удаляем ключ
+        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat_name}».")
+        photos.remove(photo_entry)
+        if not photos:
+            del PHOTO_QUEUE[user_id]
     except Exception as e:
-        bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
 
 # === Webhook настройка ===
 if __name__ == '__main__':
