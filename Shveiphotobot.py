@@ -72,6 +72,7 @@ def receive_photo():
     for cat in CATEGORY_GROUPS:
         markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{photo_id}:{cat}"))
 
+    group_file.seek(0)  # Сброс позиции перед отправкой
     bot.send_photo(OWNER_ID, group_file, caption=caption, reply_markup=markup)
 
     return "ok", 200
@@ -106,7 +107,12 @@ def handle_user_category(call):
     group_id = CATEGORY_GROUPS.get(cat)
 
     try:
-        bot.send_photo(group_id, file_id, caption="✂️ Новый заказ. Ответьте сообщением с ценой и сроками.")
+        bot.send_photo(group_id, file_id, 
+                       caption=(
+                           "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+                           "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+                           "💬 Напишите цену пошива прямо здесь."
+                       ))
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
         del PHOTO_QUEUE[user_id]
@@ -122,7 +128,6 @@ def choose_category(call):
         bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
         return
 
-    # Найти фото по photo_id
     photo_entry = None
     for p in photos:
         if p['id'] == photo_id:
@@ -136,12 +141,13 @@ def choose_category(call):
     group_id = CATEGORY_GROUPS.get(cat)
 
     try:
+        photo_entry['file'].seek(0)  # Сброс позиции перед отправкой
         bot.send_photo(group_id, photo_entry['file'], caption=photo_entry['caption'])
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
-        photos.remove(photo_entry)  # удаляем из очереди
+        photos.remove(photo_entry)
         if len(photos) == 0:
-            del PHOTO_QUEUE[user_id]  # если фоток не осталось — удаляем ключ
+            del PHOTO_QUEUE[user_id]
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
