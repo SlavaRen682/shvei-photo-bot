@@ -4,7 +4,9 @@ from flask import Flask, request
 from io import BytesIO
 import os
 
-TOKEN = os.environ.get("TOKEN")  # Установить в Render или вручную при локальном запуске
+TOKEN = os.environ.get("TOKEN")  # Установи переменную TOKEN в Render
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Установи WEBHOOK_URL в Render
+
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -31,6 +33,20 @@ CATEGORY_GROUPS = {
 }
 
 PHOTO_QUEUE = {}
+
+# === Webhook route ===
+@app.route("/", methods=["GET"])
+def index():
+    return "ShveiBot is alive!", 200
+
+@app.route("/", methods=["POST"])
+def webhook():
+    if request.headers.get("content-type") == "application/json":
+        json_str = request.get_data().decode("utf-8")
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return "ok", 200
+    return "unsupported", 403
 
 @app.route('/photo', methods=['POST'])
 def receive_photo():
@@ -104,8 +120,8 @@ def choose_category(call):
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
-# === Flask запуск для Render ===
+# === Webhook настройка ===
 if __name__ == '__main__':
-    from threading import Thread
-    Thread(target=bot.polling, kwargs={'none_stop': True}).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
