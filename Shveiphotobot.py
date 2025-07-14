@@ -56,6 +56,7 @@ def receive_photo():
         f"({request.form['first_name']})\n📞 {request.form['phone']}"
     )
     img = BytesIO(request.files['photo'].read())
+    img.seek(0)
     PHOTO_QUEUE[user_id] = {'file': img, 'caption': caption}
 
     markup = types.InlineKeyboardMarkup()
