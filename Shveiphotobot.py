@@ -63,13 +63,19 @@ def receive_photo():
     raw_bytes = request.files['photo'].read()
     photo_id = str(uuid.uuid4())
     photo_data = {"id": photo_id, "raw": raw_bytes, "caption": caption}
+
     if user_id not in PHOTO_QUEUE:
         PHOTO_QUEUE[user_id] = []
     PHOTO_QUEUE[user_id].append(photo_data)
+
     markup = types.InlineKeyboardMarkup()
     for cat_id, cat_name in CATEGORY_SHORT_IDS.items():
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat:{user_id}:{photo_id}:{cat_id}"))
-    bot.send_photo(OWNER_ID, BytesIO(raw_bytes), caption=caption, reply_markup=markup)
+
+    file_like = BytesIO(raw_bytes)
+    file_like.seek(0)
+
+    bot.send_photo(OWNER_ID, file_like, caption=caption, reply_markup=markup)
     return "ok", 200
 
 @bot.message_handler(commands=['start'])
@@ -81,9 +87,11 @@ def handle_photo_from_user(message):
     user_id = message.chat.id
     file_id = message.photo[-1].file_id
     PHOTO_QUEUE[user_id] = {'file_id': file_id}
+
     markup = types.InlineKeyboardMarkup()
     for cat_name, group_id in CATEGORY_GROUPS.items():
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat_user:{user_id}:{group_id}"))
+
     bot.send_photo(user_id, file_id, caption="🧵 Выберите категорию пошива:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_user:"))
@@ -94,12 +102,13 @@ def handle_user_category(call):
     if not data:
         bot.answer_callback_query(call.id, "❌ Фото не найдено.")
         return
+
     file_id = data['file_id']
     try:
         bot.send_photo(group_id, file_id,
-                       caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-                               "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-                               "💬 Напишите цену пошива прямо здесь.")
+            caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+                    "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+                    "💬 Напишите цену пошива прямо здесь.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
@@ -112,6 +121,7 @@ def choose_category(call):
         _, user_id_str, photo_id, cat_id = call.data.split(":")
         user_id = int(user_id_str)
         cat_name = CATEGORY_SHORT_IDS.get(cat_id)
+
         if not cat_name:
             bot.send_message(call.message.chat.id, "❌ Категория не найдена.")
             return
@@ -127,8 +137,6 @@ def choose_category(call):
             return
 
         group_id = CATEGORY_GROUPS.get(cat_name)
-
-        # 🛠 ОБЯЗАТЕЛЬНО перед повторной отправкой
         file_like = BytesIO(photo_entry['raw'])
         file_like.seek(0)
 
@@ -140,8 +148,3 @@ def choose_category(call):
             del PHOTO_QUEUE[user_id]
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
-
-
-# Эта часть не должна запускаться в Gunicorn
-# Webhook настраивай один раз отдельно вручную через скрипт set_webhook.py
-# или просто временно запусти python Shveiphotobot.py один раз
