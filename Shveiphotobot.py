@@ -4,7 +4,7 @@ from flask import Flask, request
 from io import BytesIO
 import os
 
-TOKEN = os.environ.get("TOKEN")  # Обязательно установить в Render
+TOKEN = os.environ.get("TOKEN")  # Установить в Render или вручную при локальном запуске
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -49,6 +49,42 @@ def receive_photo():
     bot.send_photo(user_id, img, caption=caption, reply_markup=markup)
     return "ok", 200
 
+@bot.message_handler(commands=['start'])
+def bot_start(message):
+    bot.send_message(message.chat.id, "👋 Отправьте фото изделия, чтобы выбрать категорию для размещения.")
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo_from_user(message):
+    user_id = message.chat.id
+    file_id = message.photo[-1].file_id
+    PHOTO_QUEUE[user_id] = {'file_id': file_id}
+
+    markup = types.InlineKeyboardMarkup()
+    for cat in CATEGORY_GROUPS:
+        markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat_user:{user_id}:{cat}"))
+
+    bot.send_photo(user_id, file_id, caption="🧵 Выберите категорию пошива:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cat_user:"))
+def handle_user_category(call):
+    _, user_id_str, cat = call.data.split(":", 2)
+    user_id = int(user_id_str)
+    data = PHOTO_QUEUE.get(user_id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Фото не найдено.")
+        return
+
+    file_id = data['file_id']
+    group_id = CATEGORY_GROUPS.get(cat)
+
+    try:
+        bot.send_photo(group_id, file_id, caption="✂️ Новый заказ. Ответьте сообщением с ценой и сроками.")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
+        del PHOTO_QUEUE[user_id]
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat:"))
 def choose_category(call):
     _, user_id_str, cat = call.data.split(":", 2)
@@ -57,15 +93,18 @@ def choose_category(call):
     if not data:
         bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
         return
+
     group_id = CATEGORY_GROUPS.get(cat)
-    bot.send_photo(group_id, data['file'], caption=data['caption'])
-    bot.send_message(call.message.chat.id, f"✅ Фото отправлено в «{cat}».")
-    del PHOTO_QUEUE[user_id]
 
-@bot.message_handler(commands=['start'])
-def bot_start(message):
-    bot.send_message(message.chat.id, "Бот запущен и ждёт команды от первого бота.")
+    try:
+        bot.send_photo(group_id, data['file'], caption=data['caption'])
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
+        del PHOTO_QUEUE[user_id]
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
+# === Flask запуск для Render ===
 if __name__ == '__main__':
     from threading import Thread
     Thread(target=bot.polling, kwargs={'none_stop': True}).start()
