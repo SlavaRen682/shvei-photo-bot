@@ -1,7 +1,6 @@
 import telebot
 from telebot import types
 from flask import Flask, request
-from io import BytesIO
 import os
 import uuid
 
@@ -39,6 +38,18 @@ REVERSE_CATEGORY_IDS = {v: k for k, v in CATEGORY_SHORT_IDS.items()}
 
 PHOTO_QUEUE = {}
 
+def save_temp_file(raw_bytes):
+    temp_filename = f"temp_photo_{uuid.uuid4()}.jpg"
+    with open(temp_filename, 'wb') as f:
+        f.write(raw_bytes)
+    return temp_filename
+
+def remove_temp_file(filename):
+    try:
+        os.remove(filename)
+    except Exception:
+        pass
+
 @app.route("/", methods=["GET"])
 def index():
     return "ShveiBot is alive!", 200
@@ -72,10 +83,11 @@ def receive_photo():
     for cat_id, cat_name in CATEGORY_SHORT_IDS.items():
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat:{user_id}:{photo_id}:{cat_id}"))
 
-    file_like = BytesIO(raw_bytes)
-    file_like.seek(0)
+    temp_file = save_temp_file(raw_bytes)
+    with open(temp_file, 'rb') as photo_file:
+        bot.send_photo(OWNER_ID, photo_file, caption=caption, reply_markup=markup)
+    remove_temp_file(temp_file)
 
-    bot.send_photo(OWNER_ID, file_like, caption=caption, reply_markup=markup)
     return "ok", 200
 
 @bot.message_handler(commands=['start'])
@@ -106,9 +118,9 @@ def handle_user_category(call):
     file_id = data['file_id']
     try:
         bot.send_photo(group_id, file_id,
-            caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-                    "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-                    "💬 Напишите цену пошива прямо здесь.")
+                       caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+                               "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+                               "💬 Напишите цену пошива прямо здесь.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
@@ -121,7 +133,6 @@ def choose_category(call):
         _, user_id_str, photo_id, cat_id = call.data.split(":")
         user_id = int(user_id_str)
         cat_name = CATEGORY_SHORT_IDS.get(cat_id)
-
         if not cat_name:
             bot.send_message(call.message.chat.id, "❌ Категория не найдена.")
             return
@@ -137,14 +148,27 @@ def choose_category(call):
             return
 
         group_id = CATEGORY_GROUPS.get(cat_name)
-        file_like = BytesIO(photo_entry['raw'])
-        file_like.seek(0)
 
-        bot.send_photo(group_id, file_like, caption=photo_entry['caption'])
+        temp_file = save_temp_file(photo_entry['raw'])
+        with open(temp_file, 'rb') as photo_file:
+            bot.send_photo(group_id, photo_file, caption=photo_entry['caption'])
+        remove_temp_file(temp_file)
+
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat_name}».")
+
         photos.remove(photo_entry)
         if not photos:
             del PHOTO_QUEUE[user_id]
+
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
+
+if __name__ == '__main__':
+    bot.remove_webhook()
+    result = bot.set_webhook(url=WEBHOOK_URL)
+    if result:
+        print("Webhook установлен успешно")
+    else:
+        print("Ошибка установки webhook")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), threaded=True)
