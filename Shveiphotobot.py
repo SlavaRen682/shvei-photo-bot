@@ -55,16 +55,23 @@ def receive_photo():
         f"📩 Новый заказ от @{request.form['username']} "
         f"({request.form['first_name']})\n📞 {request.form['phone']}"
     )
-    img = BytesIO(request.files['photo'].read())
-    img.seek(0)
-    PHOTO_QUEUE[user_id] = {'file': img, 'caption': caption}
+    # ✅ Чтение оригинального фото один раз
+    raw_bytes = request.files['photo'].read()
 
+    # ✅ Две независимые копии файла
+    user_file = BytesIO(raw_bytes)
+    group_file = BytesIO(raw_bytes)
+
+    PHOTO_QUEUE[user_id] = {'file': group_file, 'caption': caption}
+
+    # Отправка пользователю с выбором категории
     markup = types.InlineKeyboardMarkup()
     for cat in CATEGORY_GROUPS:
         markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{cat}"))
 
-    bot.send_photo(user_id, img, caption=caption, reply_markup=markup)
+    bot.send_photo(user_id, user_file, caption=caption, reply_markup=markup)
     return "ok", 200
+
 
 @bot.message_handler(commands=['start'])
 def bot_start(message):
