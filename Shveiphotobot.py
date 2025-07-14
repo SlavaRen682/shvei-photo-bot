@@ -34,7 +34,6 @@ CATEGORY_GROUPS = {
     "👗 Платья и сарафаны": "-1002897926896"
 }
 
-# Сокращённые ID для callback_data
 CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
 REVERSE_CATEGORY_IDS = {v: k for k, v in CATEGORY_SHORT_IDS.items()}
 
@@ -56,30 +55,21 @@ def webhook():
 @app.route('/photo', methods=['POST'])
 def receive_photo():
     user_id = int(request.form['user_id'])
-
     caption = (
         "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
         "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
         "💬 Напишите цену пошива прямо здесь."
     )
-
-    # Прочитать фото как bytes
     raw_bytes = request.files['photo'].read()
-
     photo_id = str(uuid.uuid4())
     photo_data = {"id": photo_id, "raw": raw_bytes, "caption": caption}
-
     if user_id not in PHOTO_QUEUE:
         PHOTO_QUEUE[user_id] = []
     PHOTO_QUEUE[user_id].append(photo_data)
-
-    # Кнопки для владельца с короткими ID
     markup = types.InlineKeyboardMarkup()
     for cat_id, cat_name in CATEGORY_SHORT_IDS.items():
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat:{user_id}:{photo_id}:{cat_id}"))
-
     bot.send_photo(OWNER_ID, BytesIO(raw_bytes), caption=caption, reply_markup=markup)
-
     return "ok", 200
 
 @bot.message_handler(commands=['start'])
@@ -91,11 +81,9 @@ def handle_photo_from_user(message):
     user_id = message.chat.id
     file_id = message.photo[-1].file_id
     PHOTO_QUEUE[user_id] = {'file_id': file_id}
-
     markup = types.InlineKeyboardMarkup()
     for cat_name, group_id in CATEGORY_GROUPS.items():
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat_user:{user_id}:{group_id}"))
-
     bot.send_photo(user_id, file_id, caption="🧵 Выберите категорию пошива:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_user:"))
@@ -106,14 +94,12 @@ def handle_user_category(call):
     if not data:
         bot.answer_callback_query(call.id, "❌ Фото не найдено.")
         return
-
     file_id = data['file_id']
     try:
         bot.send_photo(group_id, file_id,
-            caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-                    "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-                    "💬 Напишите цену пошива прямо здесь."
-        )
+                       caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+                               "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+                               "💬 Напишите цену пошива прямо здесь.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
@@ -133,12 +119,10 @@ def choose_category(call):
         if not photos:
             bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
             return
-
         photo_entry = next((p for p in photos if p['id'] == photo_id), None)
         if not photo_entry:
             bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
             return
-
         group_id = CATEGORY_GROUPS.get(cat_name)
         bot.send_photo(group_id, BytesIO(photo_entry['raw']), caption=photo_entry['caption'])
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -149,6 +133,12 @@ def choose_category(call):
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
 
-# === Запуск сервера (НЕ ставим webhook тут при gunicorn!) ===
 if __name__ == '__main__':
+    # Установка вебхука 1 раз при старте
+    bot.remove_webhook()
+    result = bot.set_webhook(url=WEBHOOK_URL)
+    if result:
+        print("Webhook установлен успешно")
+    else:
+        print("Ошибка установки webhook")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), threaded=True)
