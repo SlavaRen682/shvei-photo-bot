@@ -6,6 +6,7 @@ import os
 
 TOKEN = os.environ.get("TOKEN")  # Установи переменную TOKEN в Render
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Установи WEBHOOK_URL в Render
+OWNER_ID = int(os.environ.get("OWNER_ID"))
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -51,27 +52,36 @@ def webhook():
 @app.route('/photo', methods=['POST'])
 def receive_photo():
     user_id = int(request.form['user_id'])
+    username = request.form.get('username', '-')
+    first_name = request.form.get('first_name', '-')
+    phone = request.form.get('phone', '-')
+
+    # 📌 Текст, который будет отображаться в группе (и у владельца)
     caption = (
-    "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-    "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-    "💬 Напишите цену пошива прямо здесь."
+        "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+        "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+        "💬 Напишите цену пошива прямо здесь."
     )
-    # ✅ Чтение оригинального фото один раз
+
+    # ✅ Прочитать фото один раз
     raw_bytes = request.files['photo'].read()
 
-    # ✅ Две независимые копии файла
-    user_file = BytesIO(raw_bytes)
+    # ✅ Сделать копии файла
+    owner_file = BytesIO(raw_bytes)
     group_file = BytesIO(raw_bytes)
 
+    # 💾 Сохраняем в очередь для будущего отправления в группу
     PHOTO_QUEUE[user_id] = {'file': group_file, 'caption': caption}
 
-    # Отправка пользователю с выбором категории
+    # 📥 Отправка владельцу с кнопками выбора категории
     markup = types.InlineKeyboardMarkup()
     for cat in CATEGORY_GROUPS:
         markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{cat}"))
 
-    bot.send_photo(user_id, user_file, caption=caption, reply_markup=markup)
+    bot.send_photo(OWNER_ID, owner_file, caption=caption, reply_markup=markup)
+
     return "ok", 200
+
 
 
 @bot.message_handler(commands=['start'])
