@@ -115,16 +115,24 @@ def choose_category(call):
         if not cat_name:
             bot.send_message(call.message.chat.id, "❌ Категория не найдена.")
             return
+
         photos = PHOTO_QUEUE.get(user_id)
         if not photos:
             bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
             return
+
         photo_entry = next((p for p in photos if p['id'] == photo_id), None)
         if not photo_entry:
             bot.send_message(call.message.chat.id, "❌ Фото не найдено.")
             return
+
         group_id = CATEGORY_GROUPS.get(cat_name)
-        bot.send_photo(group_id, BytesIO(photo_entry['raw']), caption=photo_entry['caption'])
+
+        # 🛠 ОБЯЗАТЕЛЬНО перед повторной отправкой
+        file_like = BytesIO(photo_entry['raw'])
+        file_like.seek(0)
+
+        bot.send_photo(group_id, file_like, caption=photo_entry['caption'])
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat_name}».")
         photos.remove(photo_entry)
@@ -132,6 +140,7 @@ def choose_category(call):
             del PHOTO_QUEUE[user_id]
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
+
 
 # Эта часть не должна запускаться в Gunicorn
 # Webhook настраивай один раз отдельно вручную через скрипт set_webhook.py
