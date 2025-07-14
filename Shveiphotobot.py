@@ -3,6 +3,7 @@ from telebot import types
 from flask import Flask, request
 from io import BytesIO
 import os
+import uuid
 
 TOKEN = os.environ.get("TOKEN")  # Установи переменную TOKEN в Render
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Установи WEBHOOK_URL в Render
@@ -52,36 +53,28 @@ def webhook():
 @app.route('/photo', methods=['POST'])
 def receive_photo():
     user_id = int(request.form['user_id'])
-    username = request.form.get('username', '-')
-    first_name = request.form.get('first_name', '-')
-    phone = request.form.get('phone', '-')
-
-    # 📌 Текст, который будет отображаться в группе (и у владельца)
     caption = (
         "✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
         "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
         "💬 Напишите цену пошива прямо здесь."
     )
-
-    # ✅ Прочитать фото один раз
     raw_bytes = request.files['photo'].read()
-
-    # ✅ Сделать копии файла
-    owner_file = BytesIO(raw_bytes)
     group_file = BytesIO(raw_bytes)
 
-    # 💾 Сохраняем в очередь для будущего отправления в группу
-    PHOTO_QUEUE[user_id] = {'file': group_file, 'caption': caption}
+    photo_id = str(uuid.uuid4())
+    photo_data = {"id": photo_id, "file": group_file, "caption": caption}
 
-    # 📥 Отправка владельцу с кнопками выбора категории
+    if user_id not in PHOTO_QUEUE:
+        PHOTO_QUEUE[user_id] = []
+    PHOTO_QUEUE[user_id].append(photo_data)
+
     markup = types.InlineKeyboardMarkup()
     for cat in CATEGORY_GROUPS:
-        markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{cat}"))
+        markup.add(types.InlineKeyboardButton(cat, callback_data=f"cat:{user_id}:{photo_id}:{cat}"))
 
-    bot.send_photo(OWNER_ID, owner_file, caption=caption, reply_markup=markup)
+    bot.send_photo(OWNER_ID, group_file, caption=caption, reply_markup=markup)
 
     return "ok", 200
-
 
 
 @bot.message_handler(commands=['start'])
@@ -122,20 +115,33 @@ def handle_user_category(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat:"))
 def choose_category(call):
-    _, user_id_str, cat = call.data.split(":", 2)
+    _, user_id_str, photo_id, cat = call.data.split(":", 3)
     user_id = int(user_id_str)
-    data = PHOTO_QUEUE.get(user_id)
-    if not data:
+    photos = PHOTO_QUEUE.get(user_id)
+    if not photos:
+        bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
+        return
+
+    # Найти фото по photo_id
+    photo_entry = None
+    for p in photos:
+        if p['id'] == photo_id:
+            photo_entry = p
+            break
+
+    if not photo_entry:
         bot.send_message(call.message.chat.id, "❌ Фото не найдено или уже отправлено.")
         return
 
     group_id = CATEGORY_GROUPS.get(cat)
 
     try:
-        bot.send_photo(group_id, data['file'], caption=data['caption'])
+        bot.send_photo(group_id, photo_entry['file'], caption=photo_entry['caption'])
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat}».")
-        del PHOTO_QUEUE[user_id]
+        photos.remove(photo_entry)  # удаляем из очереди
+        if len(photos) == 0:
+            del PHOTO_QUEUE[user_id]  # если фоток не осталось — удаляем ключ
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
