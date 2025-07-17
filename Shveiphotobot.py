@@ -38,9 +38,10 @@ CATEGORY_GROUPS = {
 CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
 
 PHOTO_QUEUE = {}
-SENT_MESSAGES = {}  # {message_id: chat_id}
-
 REMINDER_DELAY = 300  # 5 минут
+
+# Отслеживание ответов (реплаев) на сообщения с заказами
+order_replies = {}  # ключ: (chat_id, message_id), значение: True/False
 
 def save_temp_file(raw_bytes):
     temp_filename = f"temp_photo_{uuid.uuid4()}.jpg"
@@ -174,15 +175,24 @@ def choose_category(call):
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
 
+@bot.message_handler(func=lambda message: message.reply_to_message is not None)
+def handle_reply(message):
+    chat_id = message.chat.id
+    replied_message_id = message.reply_to_message.message_id
+    key = (chat_id, replied_message_id)
+    order_replies[key] = True  # Отметить, что был ответ на сообщение с заказом
+
 def schedule_reminder(chat_id, message_id):
     def reminder():
         time.sleep(REMINDER_DELAY)
-        try:
-            replies = bot.get_chat_message_replies(chat_id, message_id)
-            if not replies:
+        key = (chat_id, message_id)
+        if not order_replies.get(key, False):
+            try:
                 bot.send_message(chat_id, "📢 Напоминание: на заказ выше пока нет откликов. Напишите свою цену!")
-        except Exception:
-            pass
+            except Exception:
+                pass
+        if key in order_replies:
+            del order_replies[key]
     threading.Thread(target=reminder).start()
 
 if __name__ == '__main__':
