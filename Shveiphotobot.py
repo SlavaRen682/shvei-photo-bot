@@ -1,9 +1,10 @@
 import telebot
 from telebot import types
 from flask import Flask, request
-from io import BytesIO
 import os
 import uuid
+import threading
+import time
 
 TOKEN = os.environ.get("TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
@@ -37,6 +38,9 @@ CATEGORY_GROUPS = {
 CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
 
 PHOTO_QUEUE = {}
+SENT_MESSAGES = {}  # {message_id: chat_id}
+
+REMINDER_DELAY = 300  # 5 минут
 
 def save_temp_file(raw_bytes):
     temp_filename = f"temp_photo_{uuid.uuid4()}.jpg"
@@ -120,13 +124,14 @@ def handle_user_category(call):
 
     file_id = data['file_id']
     try:
-        bot.send_photo(group_id, file_id,
-                       caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
-                               "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
-                               "💬 Напишите цену пошива прямо здесь.")
+        msg = bot.send_photo(group_id, file_id,
+                             caption="✂️ НОВЫЙ ЗАКАЗ ✂️\n\n"
+                                     "Если вы готовы взять пошив — ответьте на это сообщение со своей ценой и сроками.\n\n"
+                                     "💬 Напишите цену пошива прямо здесь.")
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
+        schedule_reminder(msg.chat.id, msg.message_id)
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
@@ -154,7 +159,7 @@ def choose_category(call):
 
         temp_file = save_temp_file(photo_entry['raw'])
         with open(temp_file, 'rb') as photo_file:
-            bot.send_photo(group_id, photo_file, caption=photo_entry['caption'])
+            msg = bot.send_photo(group_id, photo_file, caption=photo_entry['caption'])
         remove_temp_file(temp_file)
 
         bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -164,8 +169,21 @@ def choose_category(call):
         if not photos:
             del PHOTO_QUEUE[user_id]
 
+        schedule_reminder(msg.chat.id, msg.message_id)
+
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
+
+def schedule_reminder(chat_id, message_id):
+    def reminder():
+        time.sleep(REMINDER_DELAY)
+        try:
+            replies = bot.get_chat_message_replies(chat_id, message_id)
+            if not replies:
+                bot.send_message(chat_id, "📢 Напоминание: на заказ выше пока нет откликов. Напишите свою цену!")
+        except Exception:
+            pass
+    threading.Thread(target=reminder).start()
 
 if __name__ == '__main__':
     bot.remove_webhook()
