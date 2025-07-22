@@ -5,6 +5,7 @@ import os
 import uuid
 import threading
 import time
+import re
 
 TOKEN = os.environ.get("TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
@@ -38,10 +39,10 @@ CATEGORY_GROUPS = {
 CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
 
 PHOTO_QUEUE = {}
-REMINDER_DELAY = 300  # 5 минут
+REMINDER_DELAY = 900  # 15 минут
 
-# Отслеживание ответов (реплаев) на сообщения с заказами
-order_replies = {}  # ключ: (chat_id, message_id), значение: True/False
+order_replies = {}  # ключ: (chat_id, message_id), значение: список цен
+
 
 def save_temp_file(raw_bytes):
     temp_filename = f"temp_photo_{uuid.uuid4()}.jpg"
@@ -49,15 +50,18 @@ def save_temp_file(raw_bytes):
         f.write(raw_bytes)
     return temp_filename
 
+
 def remove_temp_file(filename):
     try:
         os.remove(filename)
     except Exception:
         pass
 
+
 @app.route("/", methods=["GET"])
 def index():
     return "ShveiBot is alive!", 200
+
 
 @app.route("/", methods=["POST"])
 def webhook():
@@ -67,6 +71,7 @@ def webhook():
         bot.process_new_updates([update])
         return "ok", 200
     return "unsupported", 403
+
 
 @app.route('/photo', methods=['POST'])
 def receive_photo():
@@ -98,9 +103,11 @@ def receive_photo():
     except Exception as e:
         return f"Error: {e}", 400
 
+
 @bot.message_handler(commands=['start'])
 def bot_start(message):
     bot.send_message(message.chat.id, "👋 Отправьте фото изделия, чтобы выбрать категорию для размещения.")
+
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo_from_user(message):
@@ -113,6 +120,7 @@ def handle_photo_from_user(message):
         markup.add(types.InlineKeyboardButton(cat_name, callback_data=f"cat_user:{user_id}:{group_id}"))
 
     bot.send_photo(user_id, file_id, caption="🧵 Выберите категорию пошива:", reply_markup=markup)
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_user:"))
 def handle_user_category(call):
@@ -135,6 +143,7 @@ def handle_user_category(call):
         schedule_reminder(msg.chat.id, msg.message_id)
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat:"))
 def choose_category(call):
@@ -165,7 +174,6 @@ def choose_category(call):
 
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено в категорию «{cat_name}».")
-
         photos.remove(photo_entry)
         if not photos:
             del PHOTO_QUEUE[user_id]
@@ -175,18 +183,39 @@ def choose_category(call):
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
 
+
 @bot.message_handler(func=lambda message: message.reply_to_message is not None)
 def handle_reply(message):
     chat_id = message.chat.id
     replied_message_id = message.reply_to_message.message_id
     key = (chat_id, replied_message_id)
-    order_replies[key] = True  # Отметить, что был ответ на сообщение с заказом
+    if key not in order_replies:
+        order_replies[key] = []
+    price = extract_price(message.text)
+    if price is not None:
+        order_replies[key].append(price)
+
+
+def extract_price(text):
+    try:
+        prices = re.findall(r'\d+', text)
+        return int(prices[0]) if prices else None
+    except:
+        return None
+
 
 def schedule_reminder(chat_id, message_id):
     def reminder():
         time.sleep(REMINDER_DELAY)
         key = (chat_id, message_id)
-        if not order_replies.get(key, False):
+        prices = order_replies.get(key, [])
+        if prices:
+            min_price = min(prices)
+            try:
+                bot.send_message(OWNER_ID, f"📉 Минимальная цена на заказ: {min_price} руб.")
+            except Exception:
+                pass
+        else:
             try:
                 bot.send_message(chat_id, "📢 Напоминание: на заказ выше пока нет откликов. Напишите свою цену!")
             except Exception:
@@ -194,6 +223,7 @@ def schedule_reminder(chat_id, message_id):
         if key in order_replies:
             del order_replies[key]
     threading.Thread(target=reminder).start()
+
 
 if __name__ == '__main__':
     bot.remove_webhook()
