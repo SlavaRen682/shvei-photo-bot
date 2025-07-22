@@ -41,7 +41,7 @@ CATEGORY_SHORT_IDS = {str(i): name for i, name in enumerate(CATEGORY_GROUPS)}
 PHOTO_QUEUE = {}
 REMINDER_DELAY = 900  # 15 минут
 
-order_replies = {}  # ключ: (chat_id, message_id), значение: список цен
+order_replies = {}  # {(chat_id, message_id): [ { 'price': int, 'user': str, 'username': str, 'file_id': str } ]}
 
 
 def save_temp_file(raw_bytes):
@@ -140,7 +140,7 @@ def handle_user_category(call):
         bot.delete_message(call.message.chat.id, call.message.message_id)
         bot.send_message(call.message.chat.id, f"✅ Фото успешно отправлено.")
         del PHOTO_QUEUE[user_id]
-        schedule_reminder(msg.chat.id, msg.message_id)
+        schedule_reminder(msg.chat.id, msg.message_id, file_id)
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка отправки: {e}")
 
@@ -178,7 +178,7 @@ def choose_category(call):
         if not photos:
             del PHOTO_QUEUE[user_id]
 
-        schedule_reminder(msg.chat.id, msg.message_id)
+        schedule_reminder(msg.chat.id, msg.message_id, msg.photo[-1].file_id)
 
     except Exception as e:
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {e}")
@@ -189,11 +189,20 @@ def handle_reply(message):
     chat_id = message.chat.id
     replied_message_id = message.reply_to_message.message_id
     key = (chat_id, replied_message_id)
-    if key not in order_replies:
-        order_replies[key] = []
+
+    file_id = message.reply_to_message.photo[-1].file_id if message.reply_to_message.photo else None
+
     price = extract_price(message.text)
     if price is not None:
-        order_replies[key].append(price)
+        entry = {
+            "price": price,
+            "user": message.from_user.first_name or "",
+            "username": f"@{message.from_user.username}" if message.from_user.username else "",
+            "file_id": file_id
+        }
+        if key not in order_replies:
+            order_replies[key] = []
+        order_replies[key].append(entry)
 
 
 def extract_price(text):
@@ -204,15 +213,20 @@ def extract_price(text):
         return None
 
 
-def schedule_reminder(chat_id, message_id):
+def schedule_reminder(chat_id, message_id, file_id):
     def reminder():
         time.sleep(REMINDER_DELAY)
         key = (chat_id, message_id)
-        prices = order_replies.get(key, [])
-        if prices:
-            min_price = min(prices)
+        entries = order_replies.get(key, [])
+
+        if entries:
+            min_entry = min(entries, key=lambda x: x['price'])
+            text = (
+                f"📉 Минимальная цена на заказ: {min_entry['price']} руб.\n"
+                f"👤 {min_entry['user']} {min_entry['username']}".strip()
+            )
             try:
-                bot.send_message(OWNER_ID, f"📉 Минимальная цена на заказ: {min_price} руб.")
+                bot.send_photo(OWNER_ID, min_entry['file_id'], caption=text)
             except Exception:
                 pass
         else:
@@ -220,8 +234,10 @@ def schedule_reminder(chat_id, message_id):
                 bot.send_message(chat_id, "📢 Напоминание: на заказ выше пока нет откликов. Напишите свою цену!")
             except Exception:
                 pass
+
         if key in order_replies:
             del order_replies[key]
+
     threading.Thread(target=reminder).start()
 
 
