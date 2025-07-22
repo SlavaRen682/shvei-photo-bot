@@ -1,8 +1,9 @@
 # set_webhook.py
 import telebot
+import os
 
 # 👉 ВСТАВЬ СЮДА СВОЙ ТОКЕН И URL
-TOKEN = "7445781292:AAGGFqaK2fHr1kE4VVQtvbykPTVXACRyWwg"
+TOKEN = os.getenv("TOKEN")
 WEBHOOK_URL = "https://shvei-photo-bot.onrender.com"
 
 bot = telebot.TeleBot(TOKEN)
